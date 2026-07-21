@@ -2,6 +2,7 @@
  "ids": [
   "0184bfd5-a5c9-4e10-8e6f-c58271bc7dbf",
   "02e5fdd1-d85a-4ba4-a308-481a5a59f884",
+  "045f6eba-6e94-4fbc-85c8-1ba3affc21d4",
   "05d493ab-098c-46d8-aa5c-bafc4611c1a8",
   "0613fb2a-08a4-4f1a-adb8-a17ae84bf06f",
   "07ad72d9-1fa9-4b64-9b7f-496f3a52f57a",
@@ -22,6 +23,7 @@
   "198e2cb8-c60f-44d8-8d09-b3faf89aea9d",
   "19f79bc4-c14b-46f6-8df6-0223d27ed872",
   "1bf9f9f5-3286-4f19-a215-7dea806f51ed",
+  "1d4467f6-2ccd-4309-97eb-55d3b5944d16",
   "20494c7c-065f-408d-aea1-035ccbdf5069",
   "206c6083-f563-44cd-81e9-c569ef0f36ef",
   "2239e38a-7da7-4975-86d9-0c48c4caccc5",
@@ -79,6 +81,7 @@
   "6d1290ca-61af-487e-8d4b-4365e095c4e9",
   "6ddcc38b-b8ab-45a3-a4c2-f1b58f6075c9",
   "6df90fe0-0a56-42ee-a66e-f1859ede5389",
+  "6e34bef0-a1a7-4cef-9837-41f96c2b9ab0",
   "6f5b146c-a752-43f8-a404-465ff293511c",
   "764b243c-75c2-4c30-a3b0-4b86543639ed",
   "764bcca1-f24d-47b6-9d87-721c572c58dc",
@@ -230,7 +233,9 @@
   "https://jobright.ai/jobs/info/6a5e6d6667b2850e77df11e0",
   "https://jobright.ai/jobs/info/6a5f6c71b0f20036bc630dd3",
   "https://jobright.ai/jobs/info/6a5f84b8b0f20036bc63158b",
-  "https://jobright.ai/jobs/info/6a5fa2f28c7fd835513ba0e6"
+  "https://jobright.ai/jobs/info/6a5fa2f28c7fd835513ba0e6",
+  "https://jobright.ai/jobs/info/6a5fc4d98c7fd835513bb029",
+  "https://jobright.ai/jobs/info/6a5fc6aeb0f20036bc63309b"
  ],
- "updated": "2026-07-21T21:39:06.961928+00:00"
+ "updated": "2026-07-21T22:35:27.341708+00:00"
 }
