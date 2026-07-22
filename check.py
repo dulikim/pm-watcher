@@ -19,7 +19,7 @@ import re
 import smtplib
 import ssl
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
 # ---- sources ---------------------------------------------------------------
@@ -39,15 +39,32 @@ MARKDOWN_SOURCES = [
     ("https://raw.githubusercontent.com/jobright-ai/2026-Product-Management-New-Grad/master/README.md", "new-grad"),
 ]
 
-# A role counts as PM if category mentions "product" OR the title looks like one.
-PM_TITLE = re.compile(
-    r"(product\s+manage|product\s+mgmt|product\s+owner|associate\s+product|\bapm\b|\bpm\b)",
+# We only want EARLY-CAREER roles: interns/co-ops in the product / program /
+# project management family (including "technical ..." and PM/TPM), plus APMs.
+# Senior, lead, principal, staff, and plain mid-level roles are filtered out
+# because they don't match either rule below.
+_INTERN = re.compile(r"\b(intern|interns|internship|internships|co-?op)\b", re.I)
+_PM_FAMILY = re.compile(
+    r"\b(?:product|program|project)\s+(?:manage(?:ment|rs?)?|mgmt|mgr)\b"
+    r"|\btechnical\s+(?:product|program|project)\b"
+    r"|\b(?:tpm|pm)\b",
     re.I,
 )
+_APM_FULL = re.compile(r"\bassociate\s+product\s+manager\b", re.I)
+_APM_ABBR = re.compile(r"\bapm\b", re.I)
+# "APM" also means Application Performance Monitoring / APM Terminals, etc. Only
+# treat a bare "APM" as product-manager when it's not clearly one of those.
+_APM_NOISE = re.compile(r"\b(engineer(?:ing)?|developer|reliability|monitoring|terminals?|devops|sre)\b", re.I)
 
 # If a single run turns up more than this many "new" roles, something upstream
 # changed (ids reshuffled) — send one digest instead of flooding your inbox.
 MAX_INDIVIDUAL_EMAILS = 25
+
+# Only email roles posted within this many days. The source repos constantly add
+# roles that were posted days ago; this skips those so you only hear about fresh
+# postings. Bump it up if you want a wider net. (Roles with no known post date,
+# e.g. some jobright rows, are always let through.)
+FRESH_DAYS = 1
 
 STATE_FILE = "seen.json"
 
@@ -69,6 +86,34 @@ def strip_md(text):
 def first_url(cell):
     m = re.search(r"\((https?://[^)\s]+)\)", cell) or re.search(r"(https?://\S+)", cell)
     return m.group(1) if m else None
+
+
+def parse_md_date(cell):
+    """jobright tables show a date like 'Jul 20'. Turn it into a unix timestamp.
+    Returns 0 if it can't be parsed (which is_fresh treats as 'let it through')."""
+    s = strip_md(cell).strip()
+    now = datetime.now(timezone.utc)
+    for fmt in ("%b %d", "%B %d"):
+        try:
+            dt = datetime.strptime(f"{s} {now.year}", fmt + " %Y").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if dt - now > timedelta(days=7):  # e.g. 'Dec 30' seen in January -> last year
+            dt = dt.replace(year=now.year - 1)
+        return int(dt.timestamp())
+    return 0
+
+
+def is_fresh(job):
+    dp = job.get("date_posted", 0)
+    if not dp:
+        return True  # unknown post date -> don't exclude it
+    # Use a calendar-day window (start of today, minus FRESH_DAYS). jobright
+    # dates are day-only (midnight UTC), so a rolling now-24h window would drop
+    # "yesterday" roles the moment the clock passes midnight. FRESH_DAYS=1 means
+    # "posted today or yesterday."
+    midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return dp >= (midnight - timedelta(days=FRESH_DAYS)).timestamp()
 
 
 def parse_json_feed(raw, role_type):
@@ -127,7 +172,7 @@ def parse_markdown_feed(raw, role_type):
                 "title": title,
                 "locations": [strip_md(cells[2])],
                 "url": url,
-                "date_posted": 0,
+                "date_posted": parse_md_date(cells[-1]),
                 "role_type": role_type,
             }
         )
@@ -138,9 +183,12 @@ def parse_markdown_feed(raw, role_type):
 
 
 def is_pm(job):
-    if "product" in (job.get("category") or "").lower():
+    t = job.get("title", "")
+    if _APM_FULL.search(t):
         return True
-    return bool(PM_TITLE.search(job.get("title", "")))
+    if _APM_ABBR.search(t) and not _APM_NOISE.search(t):
+        return True
+    return bool(_INTERN.search(t) and _PM_FAMILY.search(t))
 
 
 def is_open(job):
@@ -173,6 +221,8 @@ def collect_pm_jobs():
 
 def _merge(jobs, seen_keys, parsed):
     for j in parsed:
+        if not is_fresh(j):
+            continue
         key = (j["company_name"].strip().lower(), j["title"].strip().lower())
         if j["id"] in jobs or key in seen_keys:
             continue
