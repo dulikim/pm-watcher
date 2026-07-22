@@ -104,6 +104,35 @@ def parse_md_date(cell):
     return 0
 
 
+# Masters-only roles don't apply to an undergrad. "BS/MS" style titles (which
+# mention BOTH) are kept; titles that mention only a masters are dropped.
+# Require the possessive/plural "s" so "Scrum Master" and "Master Data" don't
+# read as a degree, and only treat a bare "MS" as a degree when it sits in
+# degree-ish context (so "MS Dynamics" / "MS Teams" don't false-positive).
+_MASTERS = re.compile(
+    r"\bmaster'?s\b"
+    r"|\bm\.?s\.?(?=\s*(?:$|[,;)/|]|only\b|degree\b|required\b|preferred\b|student|candidate))"
+    r"|\bmsc\b",
+    re.I,
+)
+# Deliberately generous: over-keeping is the safe direction. Also rescues "BA".
+_BACHELORS = re.compile(r"\bbachelor'?s?\b|\bb\.?[sa]\.?(?![a-z])|\bbsc\b|\bundergrad\w*", re.I)
+_ADV_DEG = re.compile(r"master|mba|ph\.?d", re.I)
+_BACH_DEG = re.compile(r"bachelor", re.I)
+
+
+def is_masters_only(job):
+    """True when the role is restricted to masters (or other advanced) students,
+    i.e. an advanced degree is named without bachelors also being allowed."""
+    title = job.get("title", "")
+    if _MASTERS.search(title) and not _BACHELORS.search(title):
+        return True
+    degrees = " ".join(str(d) for d in (job.get("degrees") or []))
+    if degrees and _ADV_DEG.search(degrees) and not _BACH_DEG.search(degrees):
+        return True
+    return False
+
+
 def is_fresh(job):
     dp = job.get("date_posted", 0)
     if not dp:
@@ -130,6 +159,15 @@ def parse_json_feed(raw, role_type):
                 "url": j.get("url", "#"),
                 "date_posted": j.get("date_posted", 0),
                 "role_type": role_type,
+                # extra detail for the email
+                "sponsorship": j.get("sponsorship") or "",
+                "degrees": j.get("degrees") or [],
+                "terms": j.get("terms") or [],
+                "category": j.get("category") or "",
+                "company_url": j.get("company_url") or "",
+                "date_updated": j.get("date_updated", 0),
+                "source": j.get("source") or "",
+                "work_model": "",
             }
         )
     return jobs
@@ -174,6 +212,15 @@ def parse_markdown_feed(raw, role_type):
                 "url": url,
                 "date_posted": parse_md_date(cells[-1]),
                 "role_type": role_type,
+                # jobright tables also carry a work-model column
+                "work_model": strip_md(cells[3]) if len(cells) > 4 else "",
+                "company_url": first_url(cells[0]) or "",
+                "source": "jobright",
+                "sponsorship": "",
+                "degrees": [],
+                "terms": [],
+                "category": "",
+                "date_updated": 0,
             }
         )
     return jobs
@@ -223,6 +270,10 @@ def _merge(jobs, seen_keys, parsed):
     for j in parsed:
         if not is_fresh(j):
             continue
+        if is_masters_only(j):
+            # Logged so a wrong drop is visible in the Actions log, not silent.
+            print(f"::notice::masters-only, skipped: {j.get('title', '')} @ {j.get('company_name', '')}")
+            continue
         key = (j["company_name"].strip().lower(), j["title"].strip().lower())
         if j["id"] in jobs or key in seen_keys:
             continue
@@ -269,17 +320,56 @@ def fmt_when(ts):
         return ""
 
 
+def _fmt_val(v):
+    if isinstance(v, (list, tuple)):
+        return ", ".join(str(x) for x in v if x)
+    return str(v) if v else ""
+
+
 def render_one(job):
+    """One email per role, carrying every field the source feeds give us."""
     e = html.escape
-    loc = ", ".join(job.get("locations") or []) or "—"
-    meta = " · ".join(x for x in [loc, fmt_when(job.get("date_posted")), job.get("role_type", "")] if x)
+    rows = []
+
+    def add(label, value_html):
+        if not value_html:
+            return
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:7px 16px 7px 0;color:#888;white-space:nowrap;vertical-align:top">{e(label)}</td>'
+            f'<td style="padding:7px 0;color:#231F20">{value_html}</td>'
+            f'</tr>'
+        )
+
+    add("Location", e(_fmt_val(job.get("locations"))))
+    add("Work model", e(_fmt_val(job.get("work_model"))))
+    add("Term", e(_fmt_val(job.get("terms"))))
+    add("Level", e(_fmt_val(job.get("role_type"))))
+    # The feeds set sponsorship to "Other" ~99% of the time, which means
+    # "unknown" — only surface it when it actually says something useful.
+    sponsorship = _fmt_val(job.get("sponsorship"))
+    if sponsorship.strip().lower() in ("", "other"):
+        sponsorship = ""
+    add("Sponsorship", e(sponsorship))
+    add("Degree", e(_fmt_val(job.get("degrees"))))
+    add("Category", e(_fmt_val(job.get("category"))))
+    add("Posted", e(fmt_when(job.get("date_posted"))))
+    add("Updated", e(fmt_when(job.get("date_updated"))))
+    add("Found via", e(_fmt_val(job.get("source"))))
+    cu = job.get("company_url")
+    if cu:
+        add("Company site", f'<a href="{e(cu, quote=True)}" style="color:#231F20">{e(cu)}</a>')
+
     return (
-        f'<div style="font-family:system-ui,Arial,sans-serif;color:#231F20">'
-        f'<h2 style="margin:0 0 4px;font-size:20px">{e(job["title"])}</h2>'
-        f'<div style="font-size:16px;color:#555;margin:0 0 12px">{e(job["company_name"])}</div>'
-        f'<div style="color:#888;margin:0 0 18px">{e(meta)}</div>'
-        f'<a href="{e(job["url"], quote=True)}" style="display:inline-block;padding:10px 18px;'
-        f'background:#231F20;color:#fff;text-decoration:none;border-radius:8px">apply →</a>'
+        f'<div style="font-family:system-ui,Arial,sans-serif;color:#231F20;max-width:640px">'
+        f'<h2 style="margin:0 0 4px;font-size:20px;line-height:1.3">{e(job["title"])}</h2>'
+        f'<div style="font-size:16px;color:#555;margin:0 0 18px">{e(job["company_name"])}</div>'
+        f'<a href="{e(job["url"], quote=True)}" style="display:inline-block;padding:11px 20px;'
+        f'background:#231F20;color:#fff;text-decoration:none;border-radius:8px;font-size:15px">apply →</a>'
+        f'<table style="border-collapse:collapse;font-size:14px;line-height:1.5;margin-top:20px">'
+        f'{"".join(rows)}</table>'
+        f'<div style="color:#aaa;font-size:12px;margin-top:18px">'
+        f'Full description and requirements are on the application page.</div>'
         f'</div>'
     )
 
