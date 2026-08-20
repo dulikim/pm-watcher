@@ -15,6 +15,12 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
+    # One run polls for ~55 min instead of exiting immediately. GitHub throttles
+    # `schedule` hard (measured: 34 min median between firings, 108 min worst),
+    # so relying on the cron alone means roles sit unsent for up to ~1.8h. This
+    # way GitHub only has to land one firing per hour and the loop covers the
+    # rest at a real 5-minute interval.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
 
@@ -22,18 +28,24 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: check for new PM roles
+      - name: poll for new PM roles
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: python check.py
-
-      - name: save state
         run: |
           git config user.name "pm-intern-watch"
           git config user.email "actions@users.noreply.github.com"
-          git add seen.json
-          git commit -m "update seen state" || echo "nothing to commit"
-          git pull --rebase --autostash || true
-          git push
+          end=$((SECONDS + 3300))   # ~55 min, leaves headroom under timeout-minutes
+          while :; do
+            # A failed iteration (dead feed, SMTP hiccup) must not kill the loop.
+            python check.py || echo "::warning::check failed this iteration"
+            git add seen.json
+            git commit -m "update seen state" || echo "nothing to commit"
+            # Unconditional, so a commit stranded by a failed push gets retried
+            # next iteration. Another run may have pushed while we slept.
+            git pull --rebase --autostash || true
+            git push || echo "::warning::push failed; will retry next iteration"
+            [ $SECONDS -lt $end ] || break
+            sleep 300
+          done
