@@ -174,6 +174,29 @@ class TestIsUs(unittest.TestCase):
         ]:
             self.assertFalse(check.is_us(job(locations=[loc])), loc)
 
+    def test_canadian_provinces(self):
+        """Feeds write 'Calgary, AB' with no country. Without the province
+        codes those read as US and got hit by the H-1B filter."""
+        for loc in ["Calgary, AB", "Toronto, ON", "Halifax, NS", "Winnipeg, MB",
+                    "Mississauga, ON", "Charlottetown, PE", "Whitehorse, YT"]:
+            self.assertFalse(check.is_us(job(locations=[loc])), loc)
+
+    def test_no_us_state_is_misread_as_canadian(self):
+        """The 13 province codes must not collide with the 50 states + DC."""
+        us = ("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI "
+              "MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT "
+              "VT VA WA WV WI WY DC").split()
+        for state in us:
+            self.assertTrue(check.is_us(job(locations=[f"Springfield, {state}"])), state)
+
+    def test_onsite_does_not_trigger_ontario(self):
+        """',\s*ON\b' must not fire on 'ONSITE'."""
+        self.assertTrue(check.is_us(job(locations=["San Jose, CA, ONSITE"])))
+
+    def test_canadian_cities(self):
+        for loc in ["Oakville, Ontario", "Halifax", "Winnipeg", "Saskatoon"]:
+            self.assertFalse(check.is_us(job(locations=[loc])), loc)
+
     def test_mixed_counts_as_non_us(self):
         """Don't drop a role on the strength of its foreign office."""
         self.assertFalse(check.is_us(job(locations=["New York, NY", "London, UK"])))

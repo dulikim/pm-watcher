@@ -327,7 +327,10 @@ _SUBSIDIARY_OF = re.compile(r",?\s+an?\s+(.+?)\s+company\b", re.I)
 # sponsorship filter doesn't apply to these and they pass through untouched.
 _NON_US = re.compile(
     r"\b(?:canada|toronto|vancouver|montreal|ottawa|waterloo|ontario|"
-    r"british columbia|quebec|alberta|"
+    r"british columbia|quebec|alberta|manitoba|saskatchewan|nova scotia|"
+    r"new brunswick|newfoundland|mississauga|brampton|markham|kitchener|"
+    r"oakville|burlington|guelph|oshawa|barrie|halifax|winnipeg|saskatoon|"
+    r"regina|burnaby|laval|gatineau|sherbrooke|"
     r"uk|united kingdom|england|scotland|wales|london|manchester|"
     r"ireland|dublin|"
     r"india|bangalore|bengaluru|hyderabad|pune|mumbai|delhi|gurgaon|noida|chennai|"
@@ -341,7 +344,12 @@ _NON_US = re.compile(
     r"italy|rome|milan|portugal|lisbon|greece|athens|"
     r"israel|tel aviv|uae|dubai|abu dhabi|saudi|qatar|doha|"
     r"mexico|guadalajara|brazil|sao paulo|argentina|chile|colombia|"
-    r"south africa|nigeria|kenya|egypt|turkey|istanbul)\b",
+    r"south africa|nigeria|kenya|egypt|turkey|istanbul)\b"
+    # Canadian province codes, as the feeds write them: "Calgary, AB".
+    # Checked against the 50 US state abbreviations -- none of these 13
+    # collide, so matching them can't misread a US role as foreign. \b keeps
+    # "ON" from firing on "ONSITE".
+    r"|,\s*(?:AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b",
     re.I,
 )
 
