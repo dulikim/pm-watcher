@@ -49,6 +49,7 @@
   "20494c7c-065f-408d-aea1-035ccbdf5069",
   "2062e78d-248e-498f-8e1d-23d521e29d51",
   "206c6083-f563-44cd-81e9-c569ef0f36ef",
+  "208ea4f5-0b19-40e2-bf82-27ba53a2e51c",
   "21878633-4f34-4274-81f7-68ceb6d1ace9",
   "2239e38a-7da7-4975-86d9-0c48c4caccc5",
   "225e4214-a21b-42a7-aec8-1256a38dd0bb",
@@ -121,6 +122,7 @@
   "60a58809-88a6-40a5-944b-b6ff6dc0423e",
   "61e2d016-23f6-49eb-a3f6-dc2a7dbb1d4e",
   "6282e10d-3fbf-40be-9ef4-bc37debeb67b",
+  "635bfbf6-24d3-4da6-ad9e-75723baa62af",
   "63b37cdd-9cee-4eaa-94b3-a8bca7c6fc75",
   "6442fdc7-c457-4bcb-9d16-5ae6bf954e3e",
   "645b61ea-3bc4-432f-86af-7f6909ed5656",
@@ -137,6 +139,7 @@
   "70bc621d-eca4-4bc2-9cca-cbf883a2a5b4",
   "70e97aa1-1967-4add-9a5a-8a9208c8db26",
   "7374f199-7fc6-45ac-8316-dc868e97ee81",
+  "73940e9a-7ca2-4efe-bbdf-be9ff0f37259",
   "764b243c-75c2-4c30-a3b0-4b86543639ed",
   "764bcca1-f24d-47b6-9d87-721c572c58dc",
   "78c310c0-db61-4415-8ad0-580c7703890d",
@@ -246,11 +249,13 @@
   "c26b2364-8f05-423f-8def-b6d4e6b8ffd0",
   "c27c66d5-9509-490d-968c-e3ce9a235a04",
   "c35892b2-9f39-466f-87da-4e2f4f621ebd",
+  "c48914ab-1f0c-4a5e-a350-c3cf1fbdf3a6",
   "c547f307-4a45-400d-aec4-19024403ee65",
   "c581bac5-be54-412c-bb00-819e25e00ebd",
   "c66b9e51-cc5e-42c0-b63c-7674f5f2ef0d",
   "c72eedcd-8f01-45b3-a03e-116e5eb1f65f",
   "c811b00c-e550-48bc-a279-ce153ab7fef7",
+  "c8cdf3ca-e946-419a-a1a4-a4b599713db0",
   "ca23bb6b-38c7-49e5-8890-cce71a429db4",
   "cd64a5ea-e39f-46da-9968-2118ff190093",
   "cdad73e5-37e6-4e9e-aa70-725e23b17c73",
@@ -679,7 +684,8 @@
   "https://jobright.ai/jobs/info/6a99ca5490a313642c652ccd",
   "https://jobright.ai/jobs/info/6a99d428040e5c3d0759924b",
   "https://jobright.ai/jobs/info/6a99f6958a8b765bc55f6942",
-  "https://jobright.ai/jobs/info/6a9a01e0138838706059200e"
+  "https://jobright.ai/jobs/info/6a9a01e0138838706059200e",
+  "https://jobright.ai/jobs/info/6a9a11d990a313642c6545c6"
  ],
- "updated": "2026-09-04T01:47:47.639812+00:00"
+ "updated": "2026-09-04T05:49:21.106352+00:00"
 }
