@@ -68,15 +68,20 @@ FRESH_DAYS = 1
 
 STATE_FILE = "seen.json"
 
-# Only email roles at Fortune 500 companies with a real H-1B sponsorship record
-# (>=1 approval in FY2025 or FY2026 YTD). Data comes from sponsors.json, built
-# from the USCIS x Fortune spreadsheet by build_sponsors.py.
+# Only email roles at employers with a real H-1B record. sponsors.json holds
+# every U.S. employer USCIS shows with >=1 approval in FY2025 or FY2026 YTD --
+# ~71.6k of them, not just the Fortune 500 -- built by build_sponsors.py.
 #
 # US ROLES ONLY. A posting outside the US isn't governed by H-1B at all, so the
 # filter is skipped for those and they come through as before.
 #
 # Set to False to go back to emailing every PM role.
 SPONSORS_ONLY = True
+
+# Minimum approved petitions (FY2025 + FY2026 YTD) to count as sponsoring.
+# 1 means "has ever filed and been approved in the window". Raise it to demand
+# a heavier filer -- 10 cuts the one-off shops that sponsored a single person.
+MIN_PETITIONS = 1
 
 SPONSORS_FILE = "sponsors.json"
 
@@ -256,44 +261,74 @@ def is_open(job):
 
 # ---- sponsorship filter ----------------------------------------------------
 
-# Dropped when normalizing, so "Nvidia Corp" == "Nvidia". Must stay in sync with
-# build_sponsors.py, which uses the same rule to build the lookup keys.
+# Dropped when normalizing, so "NVIDIA CORPORATION" == "Nvidia". Must stay in
+# sync with build_sponsors.py, which builds the keys with the same rule; a test
+# pins the two together, since drift would break every lookup at once.
 _SUFFIXES = {
     "inc", "incorporated", "corp", "corporation", "co", "company", "llc", "lp",
-    "ltd", "limited", "plc", "holdings", "holding", "group", "the", "and",
+    "llp", "ltd", "limited", "plc", "holdings", "holding", "group", "the",
+    "and", "usa", "us", "na",
 }
 
 
+# Feeds decorate names with a parenthetical alias -- "PricewaterhouseCoopers
+# (PwC)", "Bank of New York (BNY)". Dropped before matching, since the paren
+# text is a second name rather than part of the first: left in, it made the
+# normalized name longer than any real entity and matched nothing.
+_PARENTHETICAL = re.compile(r"\s*\([^)]*\)")
+
+
 def normalize_company(name):
-    """Lowercase, strip punctuation and corporate suffixes, collapse spaces."""
-    s = (name or "").lower()
+    """Lowercase, strip parentheticals, punctuation and corporate suffixes."""
+    s = _PARENTHETICAL.sub("", (name or "")).lower()
     s = s.replace("&", " and ")
     s = re.sub(r"[^a-z0-9]+", " ", s)
     return " ".join(w for w in s.split() if w and w not in _SUFFIXES)
 
 
 def load_sponsors():
-    """Returns the set of normalized company keys that sponsor, or None if the
-    file is missing or unreadable. None means FAIL OPEN: the filter is skipped
-    entirely rather than silently dropping every role."""
+    """Returns ({normalized name: petitions}, {alias: normalized name}), or
+    (None, {}) if the file is missing or unreadable. None means FAIL OPEN: the
+    filter is skipped rather than silently dropping every role."""
     try:
         with open(SPONSORS_FILE) as f:
-            keys = json.load(f).get("keys")
-        return set(keys) if keys else None
+            data = json.load(f)
+        petitions = data.get("petitions")
+        if not petitions:
+            return None, {}
+        return petitions, data.get("aliases") or {}
     except (FileNotFoundError, json.JSONDecodeError, AttributeError, TypeError):
-        return None
+        return None, {}
 
 
-SPONSOR_KEYS = load_sponsors()
+PETITIONS, ALIASES = load_sponsors()
+
+
+def _build_prefix_index(petitions):
+    """{first word: [(words, count), ...]} so a prefix match doesn't scan all
+    ~71.6k employers. Built once at import."""
+    index = {}
+    if not petitions:
+        return index
+    for key, count in petitions.items():
+        words = key.split()
+        if words:
+            index.setdefault(words[0], []).append((words, count))
+    return index
+
+
+PREFIX_INDEX = _build_prefix_index(PETITIONS)
+
+# Feeds name subsidiaries as "Progress Rail, A Caterpillar Company". The parent
+# is the entity that files the petition, so fall back to matching on it.
+_SUBSIDIARY_OF = re.compile(r",?\s+an?\s+(.+?)\s+company\b", re.I)
 
 # Locations that place a role outside the US. H-1B is a US visa, so the
 # sponsorship filter doesn't apply to these and they pass through untouched.
-# Matched against the location string, which the feeds give as "City, ST" for
-# the US and something country-ish otherwise.
 _NON_US = re.compile(
     r"\b(?:canada|toronto|vancouver|montreal|ottawa|waterloo|ontario|"
     r"british columbia|quebec|alberta|"
-    r"uk|united kingdom|england|scotland|wales|london|cambridge uk|manchester|"
+    r"uk|united kingdom|england|scotland|wales|london|manchester|"
     r"ireland|dublin|"
     r"india|bangalore|bengaluru|hyderabad|pune|mumbai|delhi|gurgaon|noida|chennai|"
     r"china|beijing|shanghai|shenzhen|hong kong|taiwan|taipei|"
@@ -319,27 +354,57 @@ def is_us(job):
     net. A role listing both US and non-US sites counts as non-US so it isn't
     dropped on the strength of its foreign office.
     """
-    locations = job.get("locations") or []
-    blob = " ".join(str(loc) for loc in locations)
+    blob = " ".join(str(loc) for loc in (job.get("locations") or []))
     return not _NON_US.search(blob)
 
 
-# Feeds name subsidiaries as "Progress Rail, A Caterpillar Company". The parent
-# is the entity that files the petition, so fall back to matching on it.
-_SUBSIDIARY_OF = re.compile(r",?\s+an?\s+(.+?)\s+company\b", re.I)
+def _lookup(name):
+    """Approved petitions for a company name, 0 when nothing matches.
+
+    The exact name and every whole-word extension of it are SUMMED, because one
+    company files under many legal entities:
+
+        "Amazon" -> AMAZON WEB SERVICES + AMAZON DEVELOPMENT CENTER + 11 more
+        "Visa"   -> VISA INC + VISA U.S.A. INC + VISA INTERNATIONAL SERVICE ...
+
+    Summing rather than stopping at the exact hit matters: Visa's own "VISA INC"
+    entry is tiny, and taking it alone reported 2 petitions for a company that
+    files thousands.
+
+    Extensions match on whole words, never characters, so "Meta" reaches
+    META PLATFORMS without also collecting METAPICKS, and "Block" doesn't
+    swallow BLOCKCHAIN. Unrelated firms sharing a first word still leak in
+    (BLOCK CHAIN SOLUTIONS adds 7 to Block's 289); that inflates the count
+    slightly and never changes a no into a yes for a real employer.
+    """
+    key = normalize_company(name)
+    if not key:
+        return 0
+    key = ALIASES.get(key, key)
+    words = key.split()
+    return PETITIONS.get(key, 0) + sum(
+        count for cand, count in PREFIX_INDEX.get(words[0], [])
+        if len(cand) > len(words) and cand[:len(words)] == words
+    )
+
+
+def petitions_for(job):
+    """Approved H-1B petitions for the job's company, 0 if no record."""
+    if not PETITIONS:
+        return 0
+    raw = job.get("company_name", "")
+    found = _lookup(raw)
+    if found:
+        return found
+    m = _SUBSIDIARY_OF.search(raw)
+    return _lookup(m.group(1)) if m else 0
 
 
 def sponsors_h1b(job):
-    """True when the company is a Fortune 500 filer with >=1 H-1B approval in
-    FY2025 or FY2026 YTD. Non-F500 companies are not in the data and so return
-    False -- that's the intended narrowing, see SPONSORS_ONLY."""
-    if SPONSOR_KEYS is None:
+    """True when the employer has at least MIN_PETITIONS approved petitions."""
+    if PETITIONS is None:
         return True  # fail open, load_sponsors already explained why
-    raw = job.get("company_name", "")
-    if normalize_company(raw) in SPONSOR_KEYS:
-        return True
-    m = _SUBSIDIARY_OF.search(raw)
-    return bool(m) and normalize_company(m.group(1)) in SPONSOR_KEYS
+    return petitions_for(job) >= MIN_PETITIONS
 
 
 def collect_pm_jobs():
@@ -377,7 +442,7 @@ def _merge(jobs, seen_keys, parsed):
         if SPONSORS_ONLY and is_us(j) and not sponsors_h1b(j):
             # Same reasoning as above: every drop is visible in the log, so a
             # company missing from the data reads as a bug, not as silence.
-            print(f"::notice::no F500 H-1B record, skipped: {j.get('title', '')} @ {j.get('company_name', '')}")
+            print(f"::notice::no H-1B record, skipped: {j.get('title', '')} @ {j.get('company_name', '')}")
             continue
         key = (j["company_name"].strip().lower(), j["title"].strip().lower())
         if j["id"] in jobs or key in seen_keys:
@@ -431,6 +496,25 @@ def _fmt_val(v):
     return str(v) if v else ""
 
 
+def h1b_summary(job):
+    """'12,135 approved petitions (heavy filer)' — the at-a-glance answer to
+    'do they actually sponsor'. Empty for non-US roles, where H-1B is moot."""
+    if not is_us(job):
+        return ""
+    n = petitions_for(job)
+    if not n:
+        return "no H-1B record found"
+    if n >= 1000:
+        band = "heavy filer"
+    elif n >= 100:
+        band = "files regularly"
+    elif n >= 10:
+        band = "files occasionally"
+    else:
+        band = "thin record"
+    return f"{n:,} approved petitions ({band})"
+
+
 def render_one(job):
     """One email per role, carrying every field the source feeds give us."""
     e = html.escape
@@ -447,6 +531,7 @@ def render_one(job):
         )
 
     add("Location", e(_fmt_val(job.get("locations"))))
+    add("H-1B history", e(h1b_summary(job)))
     add("Work model", e(_fmt_val(job.get("work_model"))))
     add("Term", e(_fmt_val(job.get("terms"))))
     add("Level", e(_fmt_val(job.get("role_type"))))
@@ -484,10 +569,13 @@ def render_digest(jobs):
     rows = []
     for j in sorted(jobs, key=lambda x: x.get("date_posted", 0), reverse=True):
         loc = ", ".join(j.get("locations") or []) or "—"
+        n = petitions_for(j) if is_us(j) else 0
+        h1b = f"{n:,} H-1B" if n else "—"
         rows.append(
             f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><b>{e(j["company_name"])}</b><br>'
             f'<span style="color:#555">{e(j["title"])}</span></td>'
             f'<td style="padding:8px 12px;border-bottom:1px solid #eee;color:#555">{e(loc)}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #eee;color:#555;white-space:nowrap">{e(h1b)}</td>'
             f'<td style="padding:8px 12px;border-bottom:1px solid #eee">'
             f'<a href="{e(j["url"], quote=True)}">apply</a></td></tr>'
         )
