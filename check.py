@@ -68,6 +68,18 @@ FRESH_DAYS = 1
 
 STATE_FILE = "seen.json"
 
+# Only email roles at Fortune 500 companies with a real H-1B sponsorship record
+# (>=1 approval in FY2025 or FY2026 YTD). Data comes from sponsors.json, built
+# from the USCIS x Fortune spreadsheet by build_sponsors.py.
+#
+# US ROLES ONLY. A posting outside the US isn't governed by H-1B at all, so the
+# filter is skipped for those and they come through as before.
+#
+# Set to False to go back to emailing every PM role.
+SPONSORS_ONLY = True
+
+SPONSORS_FILE = "sponsors.json"
+
 # ---- fetch + parse ---------------------------------------------------------
 
 
@@ -242,6 +254,94 @@ def is_open(job):
     return job.get("active", True) is not False and job.get("is_visible", True) is not False
 
 
+# ---- sponsorship filter ----------------------------------------------------
+
+# Dropped when normalizing, so "Nvidia Corp" == "Nvidia". Must stay in sync with
+# build_sponsors.py, which uses the same rule to build the lookup keys.
+_SUFFIXES = {
+    "inc", "incorporated", "corp", "corporation", "co", "company", "llc", "lp",
+    "ltd", "limited", "plc", "holdings", "holding", "group", "the", "and",
+}
+
+
+def normalize_company(name):
+    """Lowercase, strip punctuation and corporate suffixes, collapse spaces."""
+    s = (name or "").lower()
+    s = s.replace("&", " and ")
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return " ".join(w for w in s.split() if w and w not in _SUFFIXES)
+
+
+def load_sponsors():
+    """Returns the set of normalized company keys that sponsor, or None if the
+    file is missing or unreadable. None means FAIL OPEN: the filter is skipped
+    entirely rather than silently dropping every role."""
+    try:
+        with open(SPONSORS_FILE) as f:
+            keys = json.load(f).get("keys")
+        return set(keys) if keys else None
+    except (FileNotFoundError, json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
+
+SPONSOR_KEYS = load_sponsors()
+
+# Locations that place a role outside the US. H-1B is a US visa, so the
+# sponsorship filter doesn't apply to these and they pass through untouched.
+# Matched against the location string, which the feeds give as "City, ST" for
+# the US and something country-ish otherwise.
+_NON_US = re.compile(
+    r"\b(?:canada|toronto|vancouver|montreal|ottawa|waterloo|ontario|"
+    r"british columbia|quebec|alberta|"
+    r"uk|united kingdom|england|scotland|wales|london|cambridge uk|manchester|"
+    r"ireland|dublin|"
+    r"india|bangalore|bengaluru|hyderabad|pune|mumbai|delhi|gurgaon|noida|chennai|"
+    r"china|beijing|shanghai|shenzhen|hong kong|taiwan|taipei|"
+    r"japan|tokyo|osaka|korea|seoul|singapore|malaysia|kuala lumpur|"
+    r"australia|sydney|melbourne|new zealand|"
+    r"germany|berlin|munich|france|paris|spain|madrid|barcelona|"
+    r"netherlands|amsterdam|belgium|brussels|switzerland|zurich|geneva|"
+    r"sweden|stockholm|denmark|copenhagen|norway|oslo|finland|helsinki|"
+    r"poland|warsaw|krakow|romania|bucharest|czech|prague|austria|vienna|"
+    r"italy|rome|milan|portugal|lisbon|greece|athens|"
+    r"israel|tel aviv|uae|dubai|abu dhabi|saudi|qatar|doha|"
+    r"mexico|guadalajara|brazil|sao paulo|argentina|chile|colombia|"
+    r"south africa|nigeria|kenya|egypt|turkey|istanbul)\b",
+    re.I,
+)
+
+
+def is_us(job):
+    """True unless a location clearly names somewhere outside the US.
+
+    Deliberately biased toward True: the source feeds are US-centric, and an
+    unknown or blank location should still be filtered rather than escaping the
+    net. A role listing both US and non-US sites counts as non-US so it isn't
+    dropped on the strength of its foreign office.
+    """
+    locations = job.get("locations") or []
+    blob = " ".join(str(loc) for loc in locations)
+    return not _NON_US.search(blob)
+
+
+# Feeds name subsidiaries as "Progress Rail, A Caterpillar Company". The parent
+# is the entity that files the petition, so fall back to matching on it.
+_SUBSIDIARY_OF = re.compile(r",?\s+an?\s+(.+?)\s+company\b", re.I)
+
+
+def sponsors_h1b(job):
+    """True when the company is a Fortune 500 filer with >=1 H-1B approval in
+    FY2025 or FY2026 YTD. Non-F500 companies are not in the data and so return
+    False -- that's the intended narrowing, see SPONSORS_ONLY."""
+    if SPONSOR_KEYS is None:
+        return True  # fail open, load_sponsors already explained why
+    raw = job.get("company_name", "")
+    if normalize_company(raw) in SPONSOR_KEYS:
+        return True
+    m = _SUBSIDIARY_OF.search(raw)
+    return bool(m) and normalize_company(m.group(1)) in SPONSOR_KEYS
+
+
 def collect_pm_jobs():
     """Returns {id: job}. Dedupes by id AND by (company, title) so the same role
     appearing in multiple source repos only emails once. Returns None if EVERY
@@ -273,6 +373,11 @@ def _merge(jobs, seen_keys, parsed):
         if is_masters_only(j):
             # Logged so a wrong drop is visible in the Actions log, not silent.
             print(f"::notice::masters-only, skipped: {j.get('title', '')} @ {j.get('company_name', '')}")
+            continue
+        if SPONSORS_ONLY and is_us(j) and not sponsors_h1b(j):
+            # Same reasoning as above: every drop is visible in the log, so a
+            # company missing from the data reads as a bug, not as silence.
+            print(f"::notice::no F500 H-1B record, skipped: {j.get('title', '')} @ {j.get('company_name', '')}")
             continue
         key = (j["company_name"].strip().lower(), j["title"].strip().lower())
         if j["id"] in jobs or key in seen_keys:

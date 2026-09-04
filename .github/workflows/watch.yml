@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: run tests
+        run: python3 -m unittest test_check -v
+
       - name: poll for new PM roles
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
